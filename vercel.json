@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/poll-usgs",
+      "schedule": "0 2 * * *"
+    }
+  ]
+}

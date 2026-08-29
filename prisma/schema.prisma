@@ -1,0 +1,305 @@
+// CrisisLink — verified disaster reporting platform
+//
+// Geospatial note: PostGIS `geography` columns cannot be modelled by Prisma, so
+// points live here as plain `lat`/`lng` floats. The PostGIS extension and the
+// GiST expression indexes that make radius queries fast are created in a
+// hand-written migration (see prisma/migrations/*_postgis/migration.sql), and
+// distance work is done in raw SQL against `ST_MakePoint(lng, lat)`.
+//
+// Because of that hand-written SQL, schema changes use:
+//   npx prisma migrate dev --create-only   (review the SQL, then)
+//   npx prisma migrate dev
+// so Prisma never silently drops the PostGIS objects it doesn't know about.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  CITIZEN
+  RESPONDER
+  ADMIN
+}
+
+enum DisasterType {
+  FLOOD
+  FIRE
+  EARTHQUAKE
+  STORM
+  LANDSLIDE
+  BUILDING_COLLAPSE
+  ROAD_ACCIDENT
+  OTHER
+}
+
+enum ReportStatus {
+  PENDING // received, not yet attached to an incident
+  CLUSTERED // attached to an incident
+  REJECTED // rejected by a human reviewer
+  SPAM // failed automated sanity checks
+}
+
+// The incident state machine. Only a human may move an incident to ACTIVE —
+// see src/lib/verification/state.ts. Never automate that transition.
+enum IncidentState {
+  UNVERIFIED
+  SUSPECTED
+  HIGH_CONFIDENCE
+  VERIFIED
+  ACTIVE
+  RESOLVED
+}
+
+enum ResourceType {
+  AMBULANCE
+  RESCUE_TEAM
+  BOAT
+  FIRE_ENGINE
+  MEDICAL_SUPPLIES
+  FOOD_WATER
+  HEAVY_EQUIPMENT
+}
+
+enum ResourceStatus {
+  AVAILABLE
+  ASSIGNED
+  DEPLOYED
+  UNAVAILABLE
+}
+
+enum IncidentSource {
+  CITIZEN // emerged from clustered citizen reports
+  OFFICIAL // ingested from USGS / EONET / GDACS / FIRMS / IMD
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(CITIZEN)
+  // Reserved for Phase 2 report weighting; every user starts neutral.
+  trustScore   Float    @default(1.0)
+  createdAt    DateTime @default(now())
+
+  reports           Report[]
+  verifiedIncidents Incident[] @relation("VerifiedBy")
+  auditLogs         AuditLog[]
+  pushSubscriptions PushSubscription[]
+  assignedIncidents Incident[]         @relation("AssignedIncidents")
+
+  @@index([role])
+}
+
+model Report {
+  id             String       @id @default(cuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  disasterType   DisasterType
+  severity       Int // reporter's own 1-5 rating
+  description    String
+  mediaUrls      String[]     @default([])
+  peopleInDanger Int          @default(0)
+  helpNeeded     String[]     @default([])
+  lat            Float
+  lng            Float
+  accuracy       Float? // GPS accuracy in metres, as reported by the browser
+  status         ReportStatus @default(PENDING)
+  createdAt      DateTime     @default(now())
+
+  // Text classification (step 4 of the pipeline). Nullable throughout: the
+  // classifier is optional, and a report whose classification failed or was
+  // skipped must still flow through clustering and scoring untouched.
+  // 0-1 value fed to the confidence formula, already mapped from the raw
+  // classification by classificationToComponentValue() so the policy lives in
+  // code rather than in a stored model opinion. Null = never classified.
+  aiConfidence   Float?
+  aiMatchesType  Boolean?
+  aiSeverity     Int? // the classifier's own 1-5 read, for comparison
+  aiReasoning    String?
+  aiModel        String? // which model produced it, for the audit trail
+  aiClassifiedAt DateTime?
+
+  incidentLinks IncidentReport[]
+
+  // Supports the "recent reports of type X" half of the clustering query;
+  // the geospatial half is served by the GiST index in the postgis migration.
+  @@index([disasterType, createdAt])
+  @@index([userId, createdAt])
+}
+
+model Incident {
+  id              String         @id @default(cuid())
+  disasterType    DisasterType
+  title           String?
+  centerLat       Float
+  centerLng       Float
+  radiusMeters    Float          @default(1000)
+  confidenceScore Float          @default(0)
+  state           IncidentState  @default(UNVERIFIED)
+  severity        Int            @default(1)
+  source          IncidentSource @default(CITIZEN)
+
+  // Official-feed provenance. `externalId` is namespaced per feed
+  // (e.g. "usgs:ci41538288") so re-polling is idempotent.
+  externalId  String? @unique
+  externalUrl String?
+
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  scoredAt   DateTime?
+  verifiedAt DateTime?
+  verifiedBy String?
+  verifier   User?     @relation("VerifiedBy", fields: [verifiedBy], references: [id], onDelete: SetNull)
+  resolvedAt DateTime?
+
+  // One responder per incident. A real deployment would need many-to-many with
+  // roles and shift handover; this is the scoped-prototype version and is
+  // named in the report as such.
+  assignedToId String?
+  assignedTo   User?     @relation("AssignedIncidents", fields: [assignedToId], references: [id], onDelete: SetNull)
+  assignedAt   DateTime?
+
+  reportLinks IncidentReport[]
+  alerts      Alert[]
+  resources   Resource[]
+
+  @@index([state, disasterType, createdAt])
+  @@index([source])
+  @@index([assignedToId, state])
+}
+
+// Join table: which reports back which incident.
+model IncidentReport {
+  id         String   @id @default(cuid())
+  incidentId String
+  incident   Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  reportId   String
+  report     Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([incidentId, reportId])
+  @@index([reportId])
+}
+
+/**
+ * A deployable unit — a boat, an ambulance, a rescue team.
+ *
+ * Assignment is a plain foreign key to one incident, not an allocation
+ * algorithm. The build brief is explicit that a priority sort is the honest
+ * scope here and that an "AI optimiser" would be a fake; see src/lib/priority.ts
+ * for the ranking and its reasoning.
+ */
+model Resource {
+  id       String         @id @default(cuid())
+  type     ResourceType
+  label    String
+  lat      Float
+  lng      Float
+  quantity Int            @default(1)
+  status   ResourceStatus @default(AVAILABLE)
+
+  assignedIncidentId String?
+  assignedIncident   Incident? @relation(fields: [assignedIncidentId], references: [id], onDelete: SetNull)
+  assignedAt         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, type])
+  @@index([assignedIncidentId])
+}
+
+/** A place people can be directed to. Occupancy is maintained by hand. */
+model Shelter {
+  id               String   @id @default(cuid())
+  name             String
+  lat              Float
+  lng              Float
+  capacity         Int
+  currentOccupancy Int      @default(0)
+  contact          String?
+  isOpen           Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([isOpen])
+}
+
+/**
+ * Append-only record of every human decision on an incident. This is the
+ * accountability half of the safety story: automatic scoring can move an
+ * incident up to VERIFIED, but ACTIVE (which alerts real people) and RESOLVED
+ * require a person, and this table records who, what and when.
+ */
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String // e.g. "incident.activate"
+  targetType String // e.g. "Incident"
+  targetId   String
+  // Free-form detail: previous state, score at the time, rejection reason.
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([targetType, targetId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+/**
+ * A browser push registration for one device.
+ *
+ * Location: geofenced alerting needs to know roughly where a device is, and
+ * the honest minimum is to store what the user consented to share when they
+ * opted in — not to track them continuously. Coordinates are recorded once at
+ * subscribe time and refreshed only when the user re-subscribes, so this is a
+ * standing "alert me about this area" rather than a movement log. A
+ * subscription with no location still exists but receives no geofenced alerts.
+ */
+model PushSubscription {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // The push service URL the browser gave us, plus its encryption keys.
+  // Unique because re-subscribing the same device must update, not duplicate.
+  endpoint String @unique
+  p256dh   String
+  auth     String
+
+  lat Float?
+  lng Float?
+
+  userAgent String?
+  createdAt DateTime  @default(now())
+  lastSentAt DateTime?
+  // Consecutive delivery failures; a subscription is pruned once the push
+  // service reports it permanently gone (404/410), not on transient errors.
+  failureCount Int @default(0)
+
+  @@index([userId])
+}
+
+model Alert {
+  id           String    @id @default(cuid())
+  incidentId   String
+  incident     Incident  @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  message      String
+  radiusMeters Float
+  sentAt       DateTime  @default(now())
+  expiresAt    DateTime?
+  cancelledAt  DateTime?
+  // Delivery outcome, recorded so the analytics page and the audit trail can
+  // show what an activation actually did rather than what it intended.
+  recipientCount Int @default(0)
+  deliveredCount Int @default(0)
+  createdBy      String?
+
+  @@index([incidentId, sentAt])
+}
