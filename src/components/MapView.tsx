@@ -4,7 +4,12 @@ import { useEffect } from "react";
 import { Circle, CircleMarker, MapContainer, Popup, TileLayer, useMap } from "react-leaflet";
 import { DISASTER_EMOJI, DISASTER_LABELS, SEVERITY_LABELS, STATE_COLORS } from "@/lib/constants";
 import type { DisasterTypeValue } from "@/lib/constants";
-import { HAZARD_BOUNDS, INITIAL_VIEW_BOUNDS, toLeafletBounds } from "@/lib/india";
+import {
+  HAZARD_BOUNDS,
+  INITIAL_VIEW_BOUNDS,
+  LOCAL_VIEW_RADIUS_KM,
+  toLeafletBounds,
+} from "@/lib/india";
 import { type MapData, timeAgo } from "@/lib/map-types";
 
 const label = (type: string) => DISASTER_LABELS[type as DisasterTypeValue] ?? type;
@@ -54,21 +59,76 @@ const areaStrokeWeight = (severity: number) => 0.75 + (severity / 5) * 1.75;
 const MAX_BOUNDS = toLeafletBounds(HAZARD_BOUNDS);
 const INITIAL_BOUNDS = toLeafletBounds(INITIAL_VIEW_BOUNDS);
 
+export type MapScope = "national" | "responder" | "citizen";
+
 /**
- * Frames India on first paint by fitting the viewport rather than pinning a
- * fixed zoom, so a phone and a desktop both open on the country instead of one
- * of them opening on half of Asia. Runs once; panning and zooming out to the
- * wider ingest region stay entirely up to the user.
+ * Frames the opening view.
+ *
+ * National scope fits India by viewport rather than a fixed zoom, so a phone
+ * and a desktop both open on the country instead of one opening on half of
+ * Asia. Local scopes centre on the viewer and fall back to the national frame
+ * when location is unavailable — a citizen must never be left staring at a
+ * blank ocean because they declined a permission.
  */
-function InitialFraming() {
+function InitialFraming({
+  scope,
+  onFramed,
+}: {
+  scope: MapScope;
+  onFramed: (framed: "local" | "national") => void;
+}) {
   const map = useMap();
+
   useEffect(() => {
+    if (scope === "national") {
+      map.fitBounds(INITIAL_BOUNDS, { animate: false, padding: [12, 12] });
+      onFramed("national");
+      return;
+    }
+
+    // Show the national frame immediately, then tighten if location arrives.
     map.fitBounds(INITIAL_BOUNDS, { animate: false, padding: [12, 12] });
-  }, [map]);
+    onFramed("national");
+
+    let active = true;
+    const radiusKm =
+      scope === "responder" ? LOCAL_VIEW_RADIUS_KM.RESPONDER : LOCAL_VIEW_RADIUS_KM.CITIZEN;
+
+    navigator.geolocation?.getCurrentPosition(
+      (position) => {
+        if (!active) return;
+        map.fitBounds(
+          [
+            [position.coords.latitude - radiusKm / 111, position.coords.longitude - radiusKm / 100],
+            [position.coords.latitude + radiusKm / 111, position.coords.longitude + radiusKm / 100],
+          ],
+          { animate: false, padding: [12, 12] },
+        );
+        onFramed("local");
+      },
+      () => {
+        /* Declined or unavailable — the national frame already drawn stands. */
+      },
+      { enableHighAccuracy: false, timeout: 10_000, maximumAge: 300_000 },
+    );
+
+    return () => {
+      active = false;
+    };
+  }, [map, scope, onFramed]);
+
   return null;
 }
 
-export default function MapView({ data }: { data: MapData }) {
+export default function MapView({
+  data,
+  scope,
+  onFramed,
+}: {
+  data: MapData;
+  scope: MapScope;
+  onFramed: (framed: "local" | "national") => void;
+}) {
   return (
     <MapContainer
       bounds={INITIAL_BOUNDS}
@@ -85,7 +145,7 @@ export default function MapView({ data }: { data: MapData }) {
       // flex parent whose own height is not definite, leaving the map at 0 px.
       className="absolute inset-0"
     >
-      <InitialFraming />
+      <InitialFraming scope={scope} onFramed={onFramed} />
 
       {/* Muted basemap in two layers.
           Standard OSM tiles carry dense road classes and place names that, at

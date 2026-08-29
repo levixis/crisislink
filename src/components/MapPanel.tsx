@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { formatIst } from "@/lib/india";
 import PushOptIn from "@/components/PushOptIn";
+import type { MapScope } from "@/components/MapView";
 import type { MapData } from "@/lib/map-types";
 
 // Leaflet touches `window` at import time, so the map never renders on the server.
@@ -22,13 +23,21 @@ const REFRESH_MS = 60_000;
 export default function MapPanel({
   initialData,
   signedIn,
+  scope,
 }: {
   initialData: MapData;
   signedIn: boolean;
+  scope: MapScope;
 }) {
   const [data, setData] = useState<MapData>(initialData);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
+  // What the map is ACTUALLY showing, which is not always what was asked for:
+  // a local scope falls back to the national frame when location is refused,
+  // and the legend must not claim "your area" while showing the whole country.
+  const [framed, setFramed] = useState<"local" | "national">(
+    scope === "national" ? "national" : "national",
+  );
 
   const load = useCallback(async () => {
     try {
@@ -56,11 +65,13 @@ export default function MapPanel({
 
   return (
     <div className="relative flex-1 min-h-0">
-      <MapView data={data} />
+      <MapView data={data} scope={scope} onFramed={setFramed} />
 
       <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex items-start justify-between gap-2 p-3">
         <div className="pointer-events-auto rounded-lg bg-white/95 px-3 py-2 text-xs shadow ring-1 ring-slate-200">
-          <p className="font-semibold text-slate-900">India · last 7 days</p>
+          <p className="font-semibold text-slate-900">
+            {framed === "local" ? "Your area" : "India"} · last 7 days
+          </p>
           <p className="mt-1 flex items-center gap-1.5 text-slate-600">
             <span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-400" />
             {citizenCount} citizen incident{citizenCount === 1 ? "" : "s"}

@@ -57,6 +57,26 @@ export const INITIAL_VIEW_BOUNDS: Bounds = {
   east: 89.5,
 };
 
+/**
+ * How far around themselves each role sees by default.
+ *
+ * A citizen asking "is my street flooding" and a duty officer asking "what is
+ * happening across the country" are different questions, and opening both on
+ * the same national view answers neither. Citizens and responders open on
+ * their own surroundings; only an operations view starts national. Everyone
+ * can still pan and zoom out to HAZARD_BOUNDS — this sets the opening frame,
+ * not a restriction.
+ */
+export const LOCAL_VIEW_RADIUS_KM = {
+  /** Roughly a city and its outskirts. */
+  CITIZEN: 25,
+  /** Wider, because a responder covers a district rather than a street. */
+  RESPONDER: 60,
+} as const;
+
+/** Distance within which the landing page counts an incident as "near you". */
+export const NEARBY_RADIUS_KM = 25;
+
 export const IST_TIME_ZONE = "Asia/Kolkata";
 
 export function isWithin(bounds: Bounds, point: { lat: number; lng: number }): boolean {
