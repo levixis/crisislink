@@ -63,6 +63,10 @@ export const INCIDENT_STATES = [
   "RESOLVED",
 ] as const;
 
+/**
+ * Colour encodes HOW CONFIDENT we are in a CITIZEN cluster — the confidence
+ * ladder, cold to hot.
+ */
 export const STATE_COLORS: Record<string, string> = {
   UNVERIFIED: "#94a3b8",
   SUSPECTED: "#f59e0b",
@@ -71,3 +75,18 @@ export const STATE_COLORS: Record<string, string> = {
   ACTIVE: "#b91c1c",
   RESOLVED: "#16a34a",
 };
+
+/**
+ * Official-feed events get their own colour, off the ladder entirely.
+ *
+ * They are stored as VERIFIED because a seismic network is authoritative for
+ * "did the ground shake" — but painting them with the ladder's red made red
+ * mean three unrelated things at once: an instrument measurement, a crowd
+ * consensus, and a human-issued alert. A viewer could not tell which kind of
+ * trust they were looking at, which is the one thing this map exists to show.
+ *
+ * Blue reads as information rather than alarm, which is exactly right: an
+ * official event is a fact on record, not a call to act. Red is now reserved
+ * for the crowd ladder's top, and ACTIVE is separated further by a halo.
+ */
+export const OFFICIAL_COLOR = "#1d4ed8";

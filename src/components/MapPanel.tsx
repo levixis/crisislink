@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { formatIst } from "@/lib/india";
 import PushOptIn from "@/components/PushOptIn";
 import LocationPrompt, { type LocationState } from "@/components/LocationPrompt";
+import { OFFICIAL_COLOR, STATE_COLORS } from "@/lib/constants";
 import type { MapScope } from "@/components/MapView";
 import type { MapData } from "@/lib/map-types";
 
@@ -76,23 +77,60 @@ export default function MapPanel({
       />
 
       <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex flex-col items-start gap-2 p-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="pointer-events-auto rounded-lg bg-white/95 px-3 py-2 text-xs shadow ring-1 ring-slate-200">
+        <div className="pointer-events-auto max-w-[15rem] rounded-lg bg-white/95 p-3 text-xs shadow ring-1 ring-slate-200">
           <p className="font-semibold text-slate-900">
             {framed === "local" ? "Your area" : "India"} · last 7 days
           </p>
-          <p className="mt-1 flex items-center gap-1.5 text-slate-600">
-            <span className="inline-block h-2.5 w-2.5 rounded-full bg-slate-400" />
-            {citizenCount} citizen incident{citizenCount === 1 ? "" : "s"}
+
+          {/* Two separate channels, said out loud. Colour was doing double duty
+              and nobody could tell an instrument reading from a crowd
+              consensus. */}
+          <p className="mt-2 font-medium text-slate-500">
+            Citizen reports — colour is confidence
           </p>
-          <p className="mt-0.5 flex items-center gap-1.5 text-slate-600">
-            <span className="inline-block h-2.5 w-2.5 rounded-full bg-red-600" />
-            {officialCount} official incident{officialCount === 1 ? "" : "s"}
+          <ul className="mt-1 space-y-1 text-slate-600">
+            {[
+              ["UNVERIFIED", "Unverified"],
+              ["SUSPECTED", "Suspected"],
+              ["HIGH_CONFIDENCE", "High confidence"],
+              ["VERIFIED", "Verified"],
+            ].map(([key, label]) => (
+              <li key={key} className="flex items-center gap-1.5">
+                <span
+                  className="inline-block h-2.5 w-2.5 rounded-full"
+                  style={{ backgroundColor: STATE_COLORS[key] }}
+                />
+                {label}
+              </li>
+            ))}
+            <li className="flex items-center gap-1.5">
+              <span
+                className="inline-block h-2.5 w-2.5 rounded-full ring-2 ring-slate-400"
+                style={{ backgroundColor: STATE_COLORS.ACTIVE }}
+              />
+              <span className="font-medium text-red-800">Alert issued</span>
+            </li>
+          </ul>
+
+          <p className="mt-2.5 font-medium text-slate-500">Official feeds</p>
+          <ul className="mt-1 space-y-1 text-slate-600">
+            <li className="flex items-center gap-1.5">
+              <span
+                className="inline-block h-2.5 w-2.5 rounded-full"
+                style={{ backgroundColor: OFFICIAL_COLOR }}
+              />
+              USGS seismic ({officialCount})
+            </li>
+          </ul>
+
+          <p className="mt-2 border-t border-slate-200 pt-2 text-slate-500">
+            {citizenCount} citizen · {officialCount} official
+            {activeCount > 0 ? (
+              <span className="block font-semibold text-red-700">
+                {activeCount} active alert{activeCount === 1 ? "" : "s"}
+              </span>
+            ) : null}
           </p>
-          {activeCount > 0 ? (
-            <p className="mt-0.5 font-semibold text-red-700">
-              {activeCount} active alert{activeCount === 1 ? "" : "s"}
-            </p>
-          ) : null}
           {error ? <p className="mt-1 text-red-700">{error}</p> : null}
           {updatedAt && !error ? (
             <p className="mt-1 text-slate-400">Updated {formatIst(updatedAt)} IST</p>

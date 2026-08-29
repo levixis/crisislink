@@ -2,7 +2,13 @@
 
 import { useEffect } from "react";
 import { Circle, CircleMarker, MapContainer, Popup, TileLayer, useMap } from "react-leaflet";
-import { DISASTER_EMOJI, DISASTER_LABELS, SEVERITY_LABELS, STATE_COLORS } from "@/lib/constants";
+import {
+  DISASTER_EMOJI,
+  DISASTER_LABELS,
+  OFFICIAL_COLOR,
+  SEVERITY_LABELS,
+  STATE_COLORS,
+} from "@/lib/constants";
 import type { DisasterTypeValue } from "@/lib/constants";
 import {
   HAZARD_BOUNDS,
@@ -196,9 +202,12 @@ export default function MapView({
       {data.incidents.features.map((f) => {
         const [lng, lat] = f.geometry.coordinates;
         const p = f.properties;
-        const color = STATE_COLORS[p.state] ?? "#64748b";
         const official = p.source === "OFFICIAL";
-        const gathering = p.state === "UNVERIFIED" || p.state === "SUSPECTED";
+        // Source first: an instrument measurement is a different kind of claim
+        // from a crowd consensus and must not borrow its colour.
+        const color = official ? OFFICIAL_COLOR : (STATE_COLORS[p.state] ?? "#64748b");
+        const gathering = !official && (p.state === "UNVERIFIED" || p.state === "SUSPECTED");
+        const alerting = p.state === "ACTIVE";
 
         return (
           <div key={p.id}>
@@ -213,6 +222,16 @@ export default function MapView({
                 dashArray: gathering ? "4 4" : undefined,
               }}
             />
+            {/* An issued alert gets a white halo underneath, so "a person
+                decided to warn people here" is legible at a glance and cannot
+                be confused with a merely well-scored cluster. */}
+            {alerting ? (
+              <CircleMarker
+                center={[lat, lng]}
+                radius={severityRadius(p.severity) + 6}
+                pathOptions={{ color: "#ffffff", weight: 3, fillOpacity: 0 }}
+              />
+            ) : null}
             <CircleMarker
               center={[lat, lng]}
               radius={severityRadius(p.severity)}
