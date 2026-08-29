@@ -10,6 +10,7 @@ import {
   LOCAL_VIEW_RADIUS_KM,
   toLeafletBounds,
 } from "@/lib/india";
+import type { LocationState } from "@/components/LocationPrompt";
 import { type MapData, timeAgo } from "@/lib/map-types";
 
 const label = (type: string) => DISASTER_LABELS[type as DisasterTypeValue] ?? type;
@@ -72,10 +73,15 @@ export type MapScope = "national" | "responder" | "citizen";
  */
 function InitialFraming({
   scope,
+  attempt,
   onFramed,
+  onLocation,
 }: {
   scope: MapScope;
+  /** Bumped by the "Try again" button to re-run the location request. */
+  attempt: number;
   onFramed: (framed: "local" | "national") => void;
+  onLocation: (state: LocationState) => void;
 }) {
   const map = useMap();
 
@@ -83,6 +89,14 @@ function InitialFraming({
     if (scope === "national") {
       map.fitBounds(INITIAL_BOUNDS, { animate: false, padding: [12, 12] });
       onFramed("national");
+      onLocation("granted"); // national scope never asks, so nothing to report
+      return;
+    }
+
+    if (!("geolocation" in navigator)) {
+      map.fitBounds(INITIAL_BOUNDS, { animate: false, padding: [12, 12] });
+      onFramed("national");
+      onLocation("unsupported");
       return;
     }
 
@@ -94,7 +108,8 @@ function InitialFraming({
     const radiusKm =
       scope === "responder" ? LOCAL_VIEW_RADIUS_KM.RESPONDER : LOCAL_VIEW_RADIUS_KM.CITIZEN;
 
-    navigator.geolocation?.getCurrentPosition(
+    onLocation("pending");
+    navigator.geolocation.getCurrentPosition(
       (position) => {
         if (!active) return;
         map.fitBounds(
@@ -105,9 +120,12 @@ function InitialFraming({
           { animate: false, padding: [12, 12] },
         );
         onFramed("local");
+        onLocation("granted");
       },
-      () => {
-        /* Declined or unavailable — the national frame already drawn stands. */
+      (error) => {
+        if (!active) return;
+        // The national frame already drawn stands; say why it is showing.
+        onLocation(error.code === error.PERMISSION_DENIED ? "denied" : "unavailable");
       },
       { enableHighAccuracy: false, timeout: 10_000, maximumAge: 300_000 },
     );
@@ -115,7 +133,7 @@ function InitialFraming({
     return () => {
       active = false;
     };
-  }, [map, scope, onFramed]);
+  }, [map, scope, attempt, onFramed, onLocation]);
 
   return null;
 }
@@ -123,11 +141,15 @@ function InitialFraming({
 export default function MapView({
   data,
   scope,
+  attempt,
   onFramed,
+  onLocation,
 }: {
   data: MapData;
   scope: MapScope;
+  attempt: number;
   onFramed: (framed: "local" | "national") => void;
+  onLocation: (state: LocationState) => void;
 }) {
   return (
     <MapContainer
@@ -145,7 +167,12 @@ export default function MapView({
       // flex parent whose own height is not definite, leaving the map at 0 px.
       className="absolute inset-0"
     >
-      <InitialFraming scope={scope} onFramed={onFramed} />
+      <InitialFraming
+        scope={scope}
+        attempt={attempt}
+        onFramed={onFramed}
+        onLocation={onLocation}
+      />
 
       {/* Muted basemap in two layers.
           Standard OSM tiles carry dense road classes and place names that, at

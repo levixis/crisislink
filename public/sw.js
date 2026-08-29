@@ -9,20 +9,16 @@
 self.addEventListener("install", () => self.skipWaiting());
 
 /*
- * Pass-through fetch handler — required for installability, deliberately not a
- * cache.
+ * There is deliberately NO fetch handler.
  *
- * Chrome will not treat a site as installable without a service worker that
- * handles fetch, and the Android TWA is built from that installable PWA. But
- * caching an emergency map is actively harmful: a responder shown a cached
- * incident list has no way to know it is stale. So this handler exists to
- * satisfy the requirement and does nothing else. Offline report queueing will
- * add a narrow, explicit handler for POSTs to /api/reports only — never a
- * blanket cache of application data.
+ * An earlier version had a no-op one to satisfy installability, but Chrome now
+ * warns that a no-op fetch handler "may bring overhead during navigation" and
+ * asks for it to be removed — and it no longer gates installability. Caching
+ * an emergency map would be worse than useless anyway: a responder shown a
+ * stale incident list has no way to know it is stale. Offline report queueing
+ * will add a narrow handler for POSTs to /api/reports only.
  */
-self.addEventListener("fetch", () => {
-  // Intentionally empty: no respondWith, so the browser handles it normally.
-});
+
 self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
 
 self.addEventListener("push", (event) => {

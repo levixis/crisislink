@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { formatIst } from "@/lib/india";
 import PushOptIn from "@/components/PushOptIn";
+import LocationPrompt, { type LocationState } from "@/components/LocationPrompt";
 import type { MapScope } from "@/components/MapView";
 import type { MapData } from "@/lib/map-types";
 
@@ -35,9 +36,10 @@ export default function MapPanel({
   // What the map is ACTUALLY showing, which is not always what was asked for:
   // a local scope falls back to the national frame when location is refused,
   // and the legend must not claim "your area" while showing the whole country.
-  const [framed, setFramed] = useState<"local" | "national">(
-    scope === "national" ? "national" : "national",
-  );
+  const [framed, setFramed] = useState<"local" | "national">("national");
+  const [locationState, setLocationState] = useState<LocationState>("pending");
+  // Incremented by "Try again" so the framing effect re-runs its request.
+  const [attempt, setAttempt] = useState(0);
 
   const load = useCallback(async () => {
     try {
@@ -65,9 +67,15 @@ export default function MapPanel({
 
   return (
     <div className="relative flex-1 min-h-0">
-      <MapView data={data} scope={scope} onFramed={setFramed} />
+      <MapView
+        data={data}
+        scope={scope}
+        attempt={attempt}
+        onFramed={setFramed}
+        onLocation={setLocationState}
+      />
 
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex items-start justify-between gap-2 p-3">
+      <div className="pointer-events-none absolute inset-x-0 top-0 z-[1000] flex flex-col items-start gap-2 p-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="pointer-events-auto rounded-lg bg-white/95 px-3 py-2 text-xs shadow ring-1 ring-slate-200">
           <p className="font-semibold text-slate-900">
             {framed === "local" ? "Your area" : "India"} · last 7 days
@@ -91,7 +99,10 @@ export default function MapPanel({
           ) : null}
         </div>
 
-        {signedIn ? <PushOptIn /> : null}
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
+          <LocationPrompt state={locationState} onRetry={() => setAttempt((n) => n + 1)} />
+          {signedIn ? <PushOptIn /> : null}
+        </div>
       </div>
 
       {/* pb-9 keeps the button clear of Leaflet's attribution control, which

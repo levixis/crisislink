@@ -30,9 +30,18 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
+      // Extensions (Grammarly, Night Eye, dark-mode tools) inject attributes on
+      // <html> and <body> before React hydrates, which React reports as a
+      // hydration mismatch. It is the extension, not our markup, and there is
+      // nothing to fix in the tree — so silence it at exactly these two nodes
+      // rather than let a spurious error hide real ones.
+      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="font-sans min-h-full flex flex-col bg-slate-50 text-slate-900">
+      <body
+        suppressHydrationWarning
+        className="font-sans min-h-full flex flex-col bg-slate-50 text-slate-900"
+      >
         {children}
         <ServiceWorkerRegistrar />
       </body>
