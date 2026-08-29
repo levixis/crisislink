@@ -23,12 +23,26 @@ export async function POST(request: Request) {
       );
     }
 
+    // Idempotency, before anything else has a side effect. A replayed offline
+    // report must be a no-op, not a second witness — and this also absorbs
+    // double-taps and multi-tab retries.
+    if (input.clientId) {
+      const existing = await prisma.report.findUnique({
+        where: { clientId: input.clientId },
+        select: { id: true, createdAt: true, status: true },
+      });
+      if (existing) {
+        return NextResponse.json({ report: existing, incident: null, deduplicated: true });
+      }
+    }
+
     const sanity = await checkReportSanity(user.id, input);
     if (!sanity.ok) return jsonError(sanity.reason, sanity.status);
 
     const report = await prisma.report.create({
       data: {
         userId: user.id,
+        clientId: input.clientId ?? null,
         disasterType: input.disasterType,
         severity: input.severity,
         description: input.description,

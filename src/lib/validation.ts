@@ -23,9 +23,11 @@ export const reportSchema = z.object({
   lng: z.number().min(-180).max(180),
   // Browser-reported GPS accuracy in metres.
   accuracy: z.number().positive().max(100_000).nullish(),
-  // Client-generated timestamp, used by the Phase 3 offline queue so a report
-  // drafted while offline keeps the time it was actually written.
+  // Client-generated timestamp, so a report drafted while offline keeps the
+  // time it was actually written rather than the time it synced.
   clientCreatedAt: z.iso.datetime().nullish(),
+  // Idempotency key, so replaying a queued report cannot create duplicates.
+  clientId: z.uuid().nullish(),
 });
 
 export type ReportInput = z.infer<typeof reportSchema>;

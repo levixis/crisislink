@@ -10,6 +10,7 @@ const base: Classification = {
   confidence: 0.9,
   estimatedSeverity: 4,
   plausible: true,
+  firsthand: true,
   reasoning: "Describes rising water across a road.",
   model: "test",
 };
@@ -52,4 +53,32 @@ test("every mapping stays inside 0..1", () => {
       }
     }
   }
+});
+
+test("hearsay counts for less than an eyewitness", () => {
+  // The independence assumption behind report count: five people repeating one
+  // rumour is one rumour, not five witnesses.
+  const seen = classificationToComponentValue(base);
+  const heard = classificationToComponentValue({ ...base, firsthand: false });
+
+  assert.ok(heard < seen, "a relayed account must not count as a full observation");
+  assert.ok(heard > 0, "but it is still a signal worth showing a reviewer");
+  assert.equal(heard, seen * 0.5);
+});
+
+test("uncertainty is not hearsay", () => {
+  // Someone unsure what they are looking at is still looking at it. Confidence
+  // and first-handedness are separate axes and must not be conflated.
+  const unsureButPresent = classificationToComponentValue({
+    ...base, confidence: 0.6, firsthand: true,
+  });
+  const confidentHearsay = classificationToComponentValue({
+    ...base, confidence: 1, firsthand: false,
+  });
+  assert.ok(unsureButPresent > confidentHearsay);
+});
+
+test("implausible text stays worthless whether or not it is first-hand", () => {
+  assert.equal(classificationToComponentValue({ ...base, plausible: false, firsthand: true }), 0);
+  assert.equal(classificationToComponentValue({ ...base, plausible: false, firsthand: false }), 0);
 });

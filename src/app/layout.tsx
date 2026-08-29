@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import OfflineQueueSync from "@/components/OfflineQueueSync";
 import ServiceWorkerRegistrar from "@/components/ServiceWorkerRegistrar";
 import "./globals.css";
 
@@ -44,6 +45,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       >
         {children}
         <ServiceWorkerRegistrar />
+        <OfflineQueueSync />
       </body>
     </html>
   );

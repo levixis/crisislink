@@ -128,6 +128,17 @@ Lives under `src/lib/verification/`, orchestrated by `pipeline.ts`.
    prompt, so the policy — implausible text scores 0, a real event of the wrong
    type is discounted but never zeroed — is reviewable and tested.
 5. **State transitions** (`state.ts`) — done. See below.
+**Offline reporting** (`offline-queue.ts`) — a report that fails to reach the
+server is stored in IndexedDB and replayed when the browser reports coming back
+online, keeping its original `clientCreatedAt` so clustering still sees when it
+was written rather than when it synced. Only network failures queue: a 422 or
+429 is the server deciding, and retrying it forever would spam an endpoint that
+already refused. Every report carries a client-generated `clientId`, and the
+API deduplicates on it — testing found a real race where a mount and an
+`online` event drained the queue concurrently and sent the same report twice,
+which matters because report count is the heaviest input to the confidence
+score and a duplicate reads as a second independent witness.
+
 6. **Alerting** (`push.ts`) — done. On a human ACTIVATE, subscribers whose
    stored location falls inside the incident radius are found via `ST_DWithin`
    over a partial GiST index, sent a Web Push notification, and the outcome
@@ -394,10 +405,9 @@ visible rather than being quietly forgotten.
 | Item | Phase | Why deferred | Note |
 |---|---|---|---|
 | Live map updates (Pusher / SSE) | 3 | The map already polls every 60s, which a demo cannot distinguish from push. Pusher's free tier needs an account; SSE holds a serverless function open. | Tighten the poll to ~15s as the cheap win. |
-| Offline report queueing | 3 | Needs IndexedDB plus a service-worker replay path. | **The most defensible of the deferred items** — reporting with the network down is a core disaster scenario, not a nice-to-have. `clientCreatedAt` is already plumbed through the form and API for exactly this. |
 | Report media upload | 3 | R2 needs a payment method; Vercel Blob is the free substitute. | `Report.mediaUrls` exists and is always `[]`. |
 | Boundary polygon for the service area | — | Political sensitivity around depicting disputed borders; needs an authoritative source. | Bounding box is the documented stand-in. |
-| First-hand vs. hearsay classification | 3 | Found during testing: a report saying "my cousin said..." classifies as a full-confidence match. | Five people repeating one rumour is not five independent observations, which is a real hole in the independence assumption behind reporter diversity. |
+| Per-report evidence weighting | — | Hearsay is currently discounted in the quality factor. | A relayed account is not a weak observation, it is not an observation; the cleaner fix is to weight its contribution to *evidence*, which needs per-report evidence weighting the formula does not yet have. |
 
 ---
 

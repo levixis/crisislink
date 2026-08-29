@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+import { enqueueReport } from "@/lib/offline-queue";
 import {
   DISASTER_EMOJI,
   DISASTER_LABELS,
@@ -29,6 +30,7 @@ export default function ReportForm() {
   const [manualCoords, setManualCoords] = useState({ lat: "", lng: "" });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [queued, setQueued] = useState(false);
 
   // Registers the geolocation callbacks and returns immediately. Every state
   // change happens in a callback, never synchronously, so this is safe to call
@@ -91,22 +93,31 @@ export default function ReportForm() {
     if (location.status !== "ready") return setError("A location is required before submitting.");
 
     setSubmitting(true);
+
+    // Stamped now, not at send time: a report written during an outage and
+    // synced two hours later still describes when it was written, and the
+    // clustering window depends on that being true.
+    const payload = {
+      // Generated once per submission and carried into the offline queue, so a
+      // replay is recognised as the same report rather than a new one.
+      clientId: crypto.randomUUID(),
+      disasterType,
+      severity,
+      description: description.trim(),
+      peopleInDanger,
+      helpNeeded,
+      mediaUrls: [],
+      lat: location.position.lat,
+      lng: location.position.lng,
+      accuracy: location.position.accuracy,
+      clientCreatedAt: new Date().toISOString(),
+    };
+
     try {
       const response = await fetch("/api/reports", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          disasterType,
-          severity,
-          description: description.trim(),
-          peopleInDanger,
-          helpNeeded,
-          mediaUrls: [],
-          lat: location.position.lat,
-          lng: location.position.lng,
-          accuracy: location.position.accuracy,
-          clientCreatedAt: new Date().toISOString(),
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (response.status === 401) {
@@ -119,10 +130,60 @@ export default function ReportForm() {
       router.push("/?submitted=1");
       router.refresh();
     } catch (cause) {
+      // A thrown fetch means the request never reached the server — offline,
+      // DNS failure, captive portal. That is exactly the case worth queueing.
+      // A server that answered and refused is NOT queued: it already decided.
+      const neverReachedServer = cause instanceof TypeError;
+      if (neverReachedServer) {
+        try {
+          await enqueueReport(payload);
+          setQueued(true);
+          return;
+        } catch {
+          setError(
+            "You appear to be offline and this device cannot save the report for later. Please try again when you have signal.",
+          );
+          return;
+        }
+      }
       setError(cause instanceof Error ? cause.message : "Could not submit the report.");
     } finally {
       setSubmitting(false);
     }
+  }
+
+  if (queued) {
+    return (
+      <div className="mt-6 rounded-xl bg-amber-50 p-5 ring-1 ring-amber-300">
+        <p className="text-lg font-semibold text-amber-900">Saved on your phone</p>
+        <p className="mt-1 text-sm leading-relaxed text-amber-800">
+          You are offline, so this report could not be sent yet. It has been saved on this device
+          and will be sent automatically as soon as you have signal — you can close the app.
+        </p>
+        <p className="mt-2 text-sm font-medium text-amber-900">
+          If someone is in immediate danger, call 112 now.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <a
+            href="tel:112"
+            className="rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800"
+          >
+            Call 112
+          </a>
+          <button
+            type="button"
+            onClick={() => {
+              setQueued(false);
+              setDescription("");
+              setDisasterType(null);
+            }}
+            className="rounded-lg border border-amber-400 bg-white px-4 py-2 text-sm font-medium text-amber-900"
+          >
+            Report something else
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (

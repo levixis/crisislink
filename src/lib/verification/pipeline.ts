@@ -193,6 +193,7 @@ export async function classifyAndRescore(report: ReportModel, incidentId: string
       data: {
         aiConfidence: classificationToComponentValue(classification),
         aiMatchesType: classification.matchesClaimedType,
+        aiFirsthand: classification.firsthand,
         aiSeverity: classification.estimatedSeverity,
         aiReasoning: classification.reasoning,
         aiModel: classification.model,

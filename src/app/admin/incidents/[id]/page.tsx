@@ -188,11 +188,17 @@ export default async function IncidentDetailPage({
                     {report.aiClassifiedAt ? (
                       <p
                         className={`mt-1 text-xs ${
-                          report.aiMatchesType === false ? "text-amber-700" : "text-slate-500"
+                          report.aiMatchesType === false || report.aiFirsthand === false
+                            ? "text-amber-700"
+                            : "text-slate-500"
                         }`}
                       >
                         <span className="font-medium">
-                          {report.aiMatchesType === false ? "Type mismatch" : "Text checks out"}
+                          {report.aiMatchesType === false
+                            ? "Type mismatch"
+                            : report.aiFirsthand === false
+                              ? "Second-hand account"
+                              : "Text checks out"}
                         </span>
                         {typeof report.aiConfidence === "number"
                           ? ` (${report.aiConfidence.toFixed(2)})`

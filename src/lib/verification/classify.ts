@@ -55,6 +55,12 @@ export type Classification = {
   estimatedSeverity: number;
   /** False for gibberish, jokes, tests, or text describing nothing at all. */
   plausible: boolean;
+  /**
+   * False when the reporter is relaying something someone else told them
+   * ("my cousin said the river burst its banks") rather than describing what
+   * they can see themselves.
+   */
+  firsthand: boolean;
   reasoning: string;
   model: string;
 };
@@ -78,12 +84,24 @@ const RESPONSE_SCHEMA = {
       type: "boolean",
       description: "False for gibberish, jokes, tests, or empty descriptions.",
     },
+    firsthand: {
+      type: "boolean",
+      description:
+        "True if the writer is describing what they can see or experience themselves. False if they are relaying what someone else told them, or repeating a rumour.",
+    },
     reasoning: {
       type: "string",
       description: "One short sentence explaining the judgement.",
     },
   },
-  required: ["matchesClaimedType", "confidence", "estimatedSeverity", "plausible", "reasoning"],
+  required: [
+    "matchesClaimedType",
+    "confidence",
+    "estimatedSeverity",
+    "plausible",
+    "firsthand",
+    "reasoning",
+  ],
 } as const;
 
 const SYSTEM_INSTRUCTION = `You triage citizen disaster reports for an emergency platform in India.
@@ -95,7 +113,8 @@ Rules:
 - A vague but plausible report is still plausible. Fear, confusion and poor grammar are normal under stress and are not grounds to mark something implausible.
 - Mark plausible=false only for text that describes no event at all: gibberish, tests, jokes, or advertising.
 - If the text describes a real event but a different type than claimed, set matchesClaimedType=false with high confidence, and say which type it sounds like in the reasoning.
-- Never invent details that are not in the text.`;
+- Never invent details that are not in the text.
+- Set firsthand=false when the writer is relaying someone else's account ("my cousin said", "people are saying", "I heard that"). Set it true when they describe what they can see, hear or feel themselves. Uncertainty about what is happening does not make a report second-hand — "I am not sure what that noise was" is still first-hand.`;
 
 /** Lazily constructed so an unset key is a skip, not a crash at import time. */
 function getClient(): GoogleGenAI | null {
@@ -151,6 +170,9 @@ export async function classifyReport(input: {
       confidence: Math.min(1, Math.max(0, parsed.confidence)),
       estimatedSeverity: Math.min(5, Math.max(1, Math.round(parsed.estimatedSeverity ?? 3))),
       plausible: parsed.plausible,
+      // Absent or malformed defaults to first-hand: the cost of wrongly
+      // discounting a real eyewitness is higher than of missing a rumour.
+      firsthand: parsed.firsthand !== false,
       reasoning: (parsed.reasoning ?? "").slice(0, 500),
       model: MODEL,
     };
@@ -177,6 +199,21 @@ export function classificationToComponentValue(c: Classification): number {
   // something genuinely happening. The clusterer will have grouped it by the
   // claimed type, so a human should look.
   if (!c.matchesClaimedType) return 0.15 * (1 - c.confidence) + 0.05;
+
+  // Hearsay is halved.
+  //
+  // Crowd verification rests on reports being INDEPENDENT observations. Someone
+  // relaying "my cousin said the river burst its banks" is not a second witness
+  // to the river — five people repeating one rumour is one rumour, but the
+  // report-count component cannot tell them apart. Halving here is a partial
+  // correction, applied in the quality factor.
+  //
+  // The fuller fix is to weight a hearsay report's contribution to EVIDENCE
+  // rather than quality, since the problem is that it is not an observation at
+  // all. That needs per-report evidence weighting, which the current formula
+  // does not have; this is the honest approximation, and the limitation is
+  // named in the README.
+  if (!c.firsthand) return c.confidence * 0.5;
 
   return c.confidence;
 }

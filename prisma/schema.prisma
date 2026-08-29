@@ -97,7 +97,19 @@ model User {
 }
 
 model Report {
-  id             String       @id @default(cuid())
+  id String @id @default(cuid())
+
+  /**
+   * Client-generated idempotency key.
+   *
+   * A queued offline report can be replayed more than once — two tabs, a
+   * retry, a drain racing itself. Duplicates are not a cosmetic problem here:
+   * report count is the heaviest input to the confidence score, so two copies
+   * of one report read as two independent witnesses and inflate confidence in
+   * something only one person actually saw. The server dedupes on this key.
+   */
+  clientId String? @unique
+
   userId         String
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   disasterType   DisasterType
@@ -120,6 +132,9 @@ model Report {
   // code rather than in a stored model opinion. Null = never classified.
   aiConfidence   Float?
   aiMatchesType  Boolean?
+  // False when the reporter is relaying what someone else told them. Five
+  // people repeating one rumour is not five independent observations.
+  aiFirsthand    Boolean?
   aiSeverity     Int? // the classifier's own 1-5 read, for comparison
   aiReasoning    String?
   aiModel        String? // which model produced it, for the audit trail
