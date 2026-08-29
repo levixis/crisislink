@@ -7,6 +7,16 @@ import { reportSchema } from "@/lib/validation";
 import { classifyAndRescore, processReport } from "@/lib/verification/pipeline";
 import { checkReportSanity } from "@/lib/verification/sanity";
 
+/**
+ * The response goes out in well under a second, but `after()` then runs the
+ * text classifier, which takes roughly five seconds. Without an explicit
+ * duration the serverless function can be torn down as soon as the response is
+ * flushed, killing the classification mid-flight — observed in production as
+ * reports arriving with aiClassifiedAt permanently null. 60s is ample and well
+ * inside the Hobby ceiling.
+ */
+export const maxDuration = 60;
+
 /** Citizen report intake. Phase 2 will hand the saved report to the clusterer. */
 export async function POST(request: Request) {
   try {
