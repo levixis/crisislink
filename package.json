@@ -15,7 +15,8 @@
     "poll:usgs": "tsx scripts/poll-usgs.ts",
     "typecheck": "tsc --noEmit",
     "postinstall": "prisma generate",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "test": "node --import tsx --test tests/*.test.ts",
+    "seed:demo": "tsx scripts/seed-demo.ts"
   },
   "dependencies": {
     "@google/genai": "^2.19.0",

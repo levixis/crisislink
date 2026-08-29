@@ -48,6 +48,23 @@ const MODEL = process.env.GEMINI_MODEL ?? "gemini-3.5-flash-lite";
 /** Report intake must not hang on a slow classifier. */
 const TIMEOUT_MS = 8_000;
 
+/**
+ * The free tier rate-limits per minute, and reports arrive in bursts precisely
+ * when the platform matters most — many people reporting the same event at
+ * once. Observed in testing: a run of 19 reports lost 2 classifications to
+ * 429s. One retry after a short pause recovers those without turning a
+ * throttled call into a stampede.
+ */
+const RETRY_DELAY_MS = 4_000;
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** 429 is throttling; 5xx is the service having a moment. Both are worth one retry. */
+function isRetryable(cause: unknown): boolean {
+  const status = (cause as { status?: number })?.status;
+  return status === 429 || (typeof status === "number" && status >= 500);
+}
+
 export type Classification = {
   matchesClaimedType: boolean;
   /** The model's own confidence that the text describes the claimed type. */
@@ -127,10 +144,10 @@ function getClient(): GoogleGenAI | null {
  * no key configured, the call failed, or the response was unusable. Callers
  * treat null as "component unavailable", never as a negative signal.
  */
-export async function classifyReport(input: {
-  disasterType: DisasterType;
-  description: string;
-}): Promise<Classification | null> {
+export async function classifyReport(
+  input: { disasterType: DisasterType; description: string },
+  attempt = 0,
+): Promise<Classification | null> {
   const client = getClient();
   if (!client) return null;
 
@@ -177,7 +194,12 @@ export async function classifyReport(input: {
       model: MODEL,
     };
   } catch (cause) {
-    // Never let the classifier break report intake.
+    if (attempt === 0 && isRetryable(cause)) {
+      await sleep(RETRY_DELAY_MS);
+      return classifyReport(input, attempt + 1);
+    }
+    // Never let the classifier break report intake. A null here just means the
+    // component is unavailable and the score renormalises without it.
     console.error("[crisislink] report classification failed:", cause);
     return null;
   }
