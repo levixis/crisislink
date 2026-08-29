@@ -3,7 +3,10 @@ import Nav from "@/components/Nav";
 import NearbyStatus from "@/components/NearbyStatus";
 import PushOptIn from "@/components/PushOptIn";
 import { getSessionUser } from "@/lib/auth";
+import { DISASTER_EMOJI, DISASTER_LABELS, SEVERITY_LABELS } from "@/lib/constants";
+import type { DisasterTypeValue } from "@/lib/constants";
 import { getMapData } from "@/lib/map-data";
+import { timeAgo } from "@/lib/map-types";
 import { prisma } from "@/lib/prisma";
 import { THRESHOLDS } from "@/lib/verification/state";
 
@@ -45,13 +48,23 @@ export default async function HomePage() {
   const officialCount = features.filter((f) => f.properties.source === "OFFICIAL").length;
   const citizenCount = features.length - officialCount;
 
+  // The five most recent events, newest first — real rows, so the hero shows
+  // the system working rather than a decorative graphic.
+  const recent = [...features]
+    .sort(
+      (a, b) =>
+        new Date(b.properties.createdAt).getTime() - new Date(a.properties.createdAt).getTime(),
+    )
+    .slice(0, 5);
+
   return (
     <>
       <Nav />
       <main className="flex-1">
         {/* ---------- Hero ---------- */}
         <section className="border-b border-slate-800 bg-slate-900">
-          <div className="mx-auto max-w-3xl px-4 py-10 sm:py-14">
+          <div className="mx-auto grid max-w-5xl items-start gap-10 px-4 py-10 sm:py-12 lg:grid-cols-[1.15fr_1fr]">
+            <div>
             {activeCount > 0 ? (
               <Link
                 href="/map"
@@ -99,57 +112,99 @@ export default async function HomePage() {
               </Link>
             </div>
 
-            <dl className="mt-9 grid grid-cols-3 gap-4 border-t border-slate-800 pt-6">
-              <div>
-                <dt className="text-xs uppercase tracking-wide text-slate-500">Official events</dt>
-                <dd className="mt-0.5 text-2xl font-semibold tabular-nums text-white">
-                  {officialCount}
-                </dd>
+              <dl className="mt-8 grid max-w-md grid-cols-3 gap-4 border-t border-slate-800 pt-5">
+                {[
+                  { label: "Official events", value: officialCount },
+                  { label: "Citizen incidents", value: citizenCount },
+                  { label: "Reports", value: reportCount },
+                ].map((stat) => (
+                  <div key={stat.label}>
+                    <dt className="text-[11px] uppercase tracking-wide text-slate-500">
+                      {stat.label}
+                    </dt>
+                    <dd className="mt-0.5 text-2xl font-semibold tabular-nums text-white">
+                      {stat.value}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+
+            {/* Live panel — fills the column that was empty, with real rows. */}
+            <div className="rounded-2xl bg-slate-800/60 p-4 ring-1 ring-slate-700 lg:mt-1">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-white">Monitoring now</h2>
+                <Link href="/map" className="text-xs font-medium text-slate-300 hover:text-white">
+                  Open map →
+                </Link>
               </div>
-              <div>
-                <dt className="text-xs uppercase tracking-wide text-slate-500">Citizen incidents</dt>
-                <dd className="mt-0.5 text-2xl font-semibold tabular-nums text-white">
-                  {citizenCount}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs uppercase tracking-wide text-slate-500">Reports received</dt>
-                <dd className="mt-0.5 text-2xl font-semibold tabular-nums text-white">
-                  {reportCount}
-                </dd>
-              </div>
-            </dl>
-            <p className="mt-2 text-xs text-slate-500">
-              Live from USGS seismic feeds and citizen reports across India, last 7 days.
-            </p>
+              <p className="mt-0.5 text-xs text-slate-400">
+                Live USGS seismic feed for India and its border regions.
+              </p>
+
+              <ul className="mt-3 divide-y divide-slate-700/70">
+                {recent.map((f) => {
+                  const p = f.properties;
+                  const type = p.disasterType as DisasterTypeValue;
+                  return (
+                    <li key={p.id} className="flex items-start gap-3 py-2.5">
+                      <span aria-hidden className="mt-0.5 text-base">
+                        {DISASTER_EMOJI[type] ?? "⚠️"}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm text-slate-100">
+                          {p.title ?? DISASTER_LABELS[type]}
+                        </span>
+                        <span className="text-xs text-slate-400">
+                          {SEVERITY_LABELS[p.severity] ?? `Severity ${p.severity}`} ·{" "}
+                          {timeAgo(p.createdAt)} ·{" "}
+                          {p.source === "OFFICIAL" ? "official feed" : `${p.reportCount} reports`}
+                        </span>
+                      </span>
+                    </li>
+                  );
+                })}
+                {recent.length === 0 ? (
+                  <li className="py-6 text-center text-sm text-slate-400">
+                    Nothing reported in the last 7 days.
+                  </li>
+                ) : null}
+              </ul>
+            </div>
           </div>
         </section>
 
         {/* ---------- Your area ---------- */}
-        <section className="mx-auto max-w-3xl px-4 py-8">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-            Your area
-          </h2>
-          <div className="mt-3">
+        <section className="mx-auto max-w-5xl px-4 py-8">
+          <div className="grid gap-3 sm:grid-cols-[1.6fr_1fr] sm:items-stretch">
             <NearbyStatus data={data} />
-          </div>
-          {user ? (
-            <div className="mt-3 flex flex-wrap gap-3">
-              <PushOptIn />
+            <div className="flex flex-col justify-center rounded-xl bg-white p-4 ring-1 ring-slate-200">
+              {user ? (
+                <>
+                  <p className="text-sm font-semibold text-slate-900">Alerts for your area</p>
+                  <p className="mt-0.5 mb-2.5 text-xs text-slate-500">
+                    Only sent when a responder activates an incident near you.
+                  </p>
+                  <PushOptIn />
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-semibold text-slate-900">Get alerts</p>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    <Link href="/register" className="font-medium text-blue-700 underline">
+                      Create an account
+                    </Link>{" "}
+                    to file reports and be alerted about your area.
+                  </p>
+                </>
+              )}
             </div>
-          ) : (
-            <p className="mt-3 text-sm text-slate-600">
-              <Link href="/register" className="font-medium text-blue-700 underline">
-                Create an account
-              </Link>{" "}
-              to file reports and get alerts for your area.
-            </p>
-          )}
+          </div>
         </section>
 
         {/* ---------- How verification works ---------- */}
         <section className="border-y border-slate-200 bg-white">
-          <div className="mx-auto max-w-3xl px-4 py-10">
+          <div className="mx-auto max-w-5xl px-4 py-12">
             <h2 className="text-xl font-bold tracking-tight text-slate-900">
               Why you can believe what you see here
             </h2>
@@ -158,16 +213,17 @@ export default async function HomePage() {
               what happens between a report arriving and an alert going out — no step is hidden.
             </p>
 
-            <ol className="mt-7 space-y-4">
+            <ol className="mt-7 grid gap-5 sm:grid-cols-2">
               {STEPS.map((step) => (
-                <li key={step.n} className="flex gap-4">
-                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white">
+                <li
+                  key={step.n}
+                  className="rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200"
+                >
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900 text-xs font-bold text-white">
                     {step.n}
                   </span>
-                  <div className="min-w-0 pb-1">
-                    <h3 className="font-semibold text-slate-900">{step.title}</h3>
-                    <p className="mt-0.5 text-sm leading-relaxed text-slate-600">{step.body}</p>
-                  </div>
+                  <h3 className="mt-2.5 font-semibold text-slate-900">{step.title}</h3>
+                  <p className="mt-1 text-sm leading-relaxed text-slate-600">{step.body}</p>
                 </li>
               ))}
             </ol>
@@ -197,7 +253,7 @@ export default async function HomePage() {
         </section>
 
         {/* ---------- The safety rule ---------- */}
-        <section className="mx-auto max-w-3xl px-4 py-10">
+        <section className="mx-auto max-w-5xl px-4 py-12">
           <div className="rounded-2xl bg-slate-900 p-6 text-white sm:p-8">
             <h2 className="text-lg font-bold">No machine sends an alert here</h2>
             <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-300">
@@ -240,7 +296,7 @@ export default async function HomePage() {
         </section>
 
         <footer className="border-t border-slate-200 bg-white">
-          <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3 px-4 py-6 text-xs text-slate-500">
+          <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 px-4 py-6 text-xs text-slate-500">
             <p>
               CrisisLink — a scoped prototype. Official hazard data from USGS. Not a substitute for
               emergency services.
